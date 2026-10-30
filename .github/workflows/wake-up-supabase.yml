@@ -1,9 +1,10 @@
+
 name: Wake Up Supabase
 
 on:
   schedule:
-  - cron: "0 */6 * * *"   # Runs automatically every day at 06:00 UTC
-  workflow_dispatch:       # Allows manual trigger
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
 
 jobs:
   ping-projects:
@@ -13,65 +14,83 @@ jobs:
       - name: Ping Supabase projects
         env:
           SUPABASE_PROJECTS_JSON: ${{ secrets.SUPABASE_PROJECTS_JSON }}
+
         run: |
           if [ -z "$SUPABASE_PROJECTS_JSON" ]; then
-            echo "❌ Secret SUPABASE_PROJECTS_JSON is not set."
-            echo "Go to Settings → Secrets and variables → Actions and add it."
+            echo "ERROR: SUPABASE_PROJECTS_JSON is not set."
             exit 1
           fi
 
-          python3 -c '
-          import json, os, urllib.request, urllib.error, sys
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
 
-          data = os.environ.get("SUPABASE_PROJECTS_JSON", "[]")
           try:
-              projects = json.loads(data)
+              projects = json.loads(
+                  os.environ["SUPABASE_PROJECTS_JSON"]
+              )
           except Exception as e:
-              print(f"❌ Could not parse SUPABASE_PROJECTS_JSON: {e}")
+              print(f"Invalid JSON: {e}")
               sys.exit(1)
 
-          print(f"📦 Found {len(projects)} Supabase project(s).\n")
+          if not isinstance(projects, list) or not projects:
+              print("No Supabase projects configured.")
+              sys.exit(1)
+
+          print(f"Found {len(projects)} Supabase project(s).\n")
+
           has_error = False
 
           for idx, proj in enumerate(projects):
-              url = proj.get("url", "").rstrip("/")
-              key = proj.get("api_key", "").strip()
-              name = proj.get("name", f"project-{idx+1}")
-
-              display_name = f"{name} ({url})"
+              name = proj.get("name", f"Project-{idx+1}")
+              url = str(proj.get("url", "")).strip().rstrip("/")
+              key = str(proj.get("api_key", "")).strip()
 
               if not url or not key:
-                  print(f"❌ Skipping [{name}] — missing url or anon_key in JSON.")
+                  print(f"ERROR: {name} missing URL or API key.")
                   has_error = True
                   continue
 
-              # Target Auth Health endpoint which reliably responds HTTP 200 across all key types
-              except urllib.error.HTTPError as e:     body = e.read().decode("utf-8", errors="replace")     print(f"❌ {display_name} FAILED: HTTP {e.code}")     print(f"   Response: {body[:500]}")     has_error = True
-              print(f"🌐 Pinging Database: {display_name}")
+              target_url = f"{url}/rest/v1/"
+
+              print(f"Pinging: {name}")
 
               req = urllib.request.Request(
                   target_url,
                   headers={
                       "apikey": key
-                  }     
+                  },
+                  method="GET"
               )
 
               try:
-                  with urllib.request.urlopen(req, timeout=20) as response:
-                      code = response.getcode()
-                      print(f"✅ {display_name} responded with HTTP {code} — project is active!\n")
+                  with urllib.request.urlopen(
+                      req, timeout=20
+                  ) as response:
+                      print(
+                          f"SUCCESS: {name} HTTP {response.status}\n"
+                      )
+
               except urllib.error.HTTPError as e:
-                  if e.code in (200, 204):
-                      print(f"✅ {display_name} responded with HTTP {e.code} — project is active!\n")
-                  else:
-                      print(f"❌ {display_name} FAILED with HTTP {e.code}: {e.reason}")
-                      print(f"   Check your URL and API Key for this project.\n")
-                      has_error = True
+                  body = e.read().decode(
+                      "utf-8", errors="replace"
+                  )
+                  print(
+                      f"FAILED: {name} HTTP {e.code}"
+                  )
+                  print(f"Response: {body[:500]}\n")
+                  has_error = True
+
               except Exception as e:
-                  print(f"❌ Connection error for {display_name}: {e}\n")
+                  print(f"CONNECTION ERROR: {name}: {e}\n")
                   has_error = True
 
           if has_error:
-              print("💥 One or more project pings failed. Check the logs above.")
+              print("One or more projects failed.")
               sys.exit(1)
-          '
+
+          print("All Supabase projects responded successfully!")
+          PY
