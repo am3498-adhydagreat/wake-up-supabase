@@ -63,7 +63,7 @@ jobs:
               # Read-only probes of existing tables; return zero rows.
               probe_tables = {
                   "https://miyfatjglhvdpqcauufy.supabase.co": "keepalive",
-                  "https://pfwjcxoundhcuthpfghk.supabase.co": "studies",
+                  "https://pfwjcxoundhcuthpfghk.supabase.co": "keepalive",
               }
               table = probe_tables.get(url)
               if table is None:
