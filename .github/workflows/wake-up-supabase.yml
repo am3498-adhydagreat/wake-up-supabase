@@ -1,4 +1,3 @@
-
 name: Wake Up Supabase
 
 on:
@@ -6,91 +5,79 @@ on:
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   ping-projects:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
     steps:
       - name: Ping Supabase projects
         env:
           SUPABASE_PROJECTS_JSON: ${{ secrets.SUPABASE_PROJECTS_JSON }}
-
         run: |
-          if [ -z "$SUPABASE_PROJECTS_JSON" ]; then
-            echo "ERROR: SUPABASE_PROJECTS_JSON is not set."
-            exit 1
-          fi
-
           python3 - <<'PY'
           import json
           import os
+          import re
           import sys
           import urllib.request
           import urllib.error
 
           try:
-              projects = json.loads(
-                  os.environ["SUPABASE_PROJECTS_JSON"]
-              )
-          except Exception as e:
-              print(f"Invalid JSON: {e}")
+              projects = json.loads(os.environ.get("SUPABASE_PROJECTS_JSON", ""))
+          except (ValueError, TypeError):
+              print("ERROR: SUPABASE_PROJECTS_JSON must contain valid JSON.")
               sys.exit(1)
-
           if not isinstance(projects, list) or not projects:
-              print("No Supabase projects configured.")
+              print("ERROR: Configure a non-empty list of projects.")
               sys.exit(1)
 
-          print(f"Found {len(projects)} Supabase project(s).\n")
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
 
-          has_error = False
-
-          for idx, proj in enumerate(projects):
-              name = proj.get("name", f"Project-{idx+1}")
-              url = str(proj.get("url", "")).strip().rstrip("/")
-              key = str(proj.get("api_key", "")).strip()
-
-              if not url or not key:
-                  print(f"ERROR: {name} missing URL or API key.")
-                  has_error = True
+          opener = urllib.request.build_opener(NoRedirect)
+          failed = False
+          print(f"Found {len(projects)} Supabase project(s).")
+          for index, project in enumerate(projects, 1):
+              if not isinstance(project, dict):
+                  print(f"ERROR: Project {index} must be an object.")
+                  failed = True
                   continue
-
-              target_url = f"{url}/rest/v1/"
-
-              print(f"Pinging: {name}")
-
-              req = urllib.request.Request(
-                  target_url,
-                  headers={
-                      "apikey": key
-                  },
-                  method="GET"
+              name = project.get("name", "")
+              url = project.get("url", "")
+              key = project.get("api_key", "")
+              if not all(isinstance(v, str) for v in (name, url, key)):
+                  print(f"ERROR: Project {index} fields must be strings.")
+                  failed = True
+                  continue
+              name, url, key = name.strip(), url.strip().rstrip("/"), key.strip()
+              if (not re.fullmatch(r"[A-Za-z0-9 _.-]{1,80}", name)
+                  or not re.fullmatch(r"https://[a-z0-9]{20}\.supabase\.co", url)
+                  or not re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]+", key)):
+                  print(f"ERROR: Project {index} needs a valid name, Supabase URL, and Publishable API Key.")
+                  failed = True
+                  continue
+              print(f"::add-mask::{key}")
+              request = urllib.request.Request(
+                  f"{url}/rest/v1/", headers={"apikey": key}, method="GET"
               )
-
               try:
-                  with urllib.request.urlopen(
-                      req, timeout=20
-                  ) as response:
-                      print(
-                          f"SUCCESS: {name} HTTP {response.status}\n"
-                      )
+                  with opener.open(request, timeout=30) as response:
+                      status = response.status
+                  print(f"{name}: HTTP {status}")
+                  if status != 200:
+                      failed = True
+              except urllib.error.HTTPError as error:
+                  print(f"{name}: HTTP {error.code}")
+                  failed = True
+              except Exception:
+                  print(f"{name}: connection failed or timed out.")
+                  failed = True
 
-              except urllib.error.HTTPError as e:
-                  body = e.read().decode(
-                      "utf-8", errors="replace"
-                  )
-                  print(
-                      f"FAILED: {name} HTTP {e.code}"
-                  )
-                  print(f"Response: {body[:500]}\n")
-                  has_error = True
-
-              except Exception as e:
-                  print(f"CONNECTION ERROR: {name}: {e}\n")
-                  has_error = True
-
-          if has_error:
+          if failed:
               print("One or more projects failed.")
               sys.exit(1)
-
-          print("All Supabase projects responded successfully!")
+          print("All Supabase projects responded HTTP 200.")
           PY
