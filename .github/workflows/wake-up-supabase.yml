@@ -72,6 +72,13 @@ jobs:
               except urllib.error.HTTPError as error:
                   print(f"{name}: HTTP {error.code}")
                   body = error.read(4096).decode("utf-8", errors="replace").lower()
+                  try:
+                      detail = json.loads(body)
+                      message = detail.get("message", "")
+                      if isinstance(message, str) and re.fullmatch(r"[a-z .,:;'()-]{1,200}", message):
+                          print(f"Authentication message: {message}")
+                  except (ValueError, AttributeError):
+                      pass
                   for reason in ("invalid api key", "no api key", "invalid jwt", "permission denied", "jwt expired"):
                       if reason in body:
                           print(f"Reason: {reason}")
