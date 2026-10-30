@@ -71,6 +71,10 @@ jobs:
                       failed = True
               except urllib.error.HTTPError as error:
                   print(f"{name}: HTTP {error.code}")
+                  body = error.read(4096).decode("utf-8", errors="replace").lower()
+                  for reason in ("invalid api key", "no api key", "invalid jwt", "permission denied", "jwt expired"):
+                      if reason in body:
+                          print(f"Reason: {reason}")
                   failed = True
               except Exception:
                   print(f"{name}: connection failed or timed out.")
